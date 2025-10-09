@@ -233,6 +233,13 @@ func TestFirstChunk(t *testing.T) {
 			max:      10,
 			expected: ".This is ",
 		},
+		{
+			name:     "invalid unicode",
+			text:      "Điều này có thể là nguyên nhân khiến mainboard của máy \u0017bị hư hỏng nặng và khả năng cao phải thay thế để có thể tiếp tục sử dụng.Việc sạc pin với nguồn điện không ổn định hay không đủ năng suất có thẻ khiến cho mainboard của thiết bị nói tr\u0017",
+			min:     5,
+			max:      1000,
+			expected: "Điều này có thể là nguyên nhân khiến mainboard của máy bị hư hỏng nặng và khả năng cao phải thay thế để có thể tiếp tục sử dụng.Việc sạc pin với nguồn điện không ổn định hay không đủ năng suất có thẻ khiến cho mainboard của thiết bị nói tr",
+		},
 	}
 
 	for _, tc := range testCases {

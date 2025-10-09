@@ -28,10 +28,8 @@ func main() {
 	chunkOverlap := 5 // Overlap is in number of words
 
 	chunks := chunker.Chunk(text, chunkSize, chunkOverlap)
-
 	for i, chunk := range chunks {
-		fmt.Printf("Chunk %d: %s
-", i+1, chunk)
+		fmt.Printf("Chunk %d: %s", i+1, chunk)
 	}
 }
 ```

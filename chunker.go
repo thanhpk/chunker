@@ -4,6 +4,7 @@ package chunker
 import (
 	"strings"
 
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -38,7 +39,7 @@ func FirstChunk(text string, minSize, maxSize int) string {
 	}
 
 	if len(text) <= minSize {
-		return text
+		return SanitizeUnicode(text)
 	}
 
 	candidate := ""
@@ -121,7 +122,7 @@ func FirstChunk(text string, minSize, maxSize int) string {
 		}
 	}
 
-	return candidate[:lasti]
+	return SanitizeUnicode(candidate[:lasti])
 }
 
 // Chunk splits the given text into chunks of a specified size with a given overlap.
@@ -197,4 +198,40 @@ func LastRuneByteIndex(s string) int {
 		return -1
 	}
 	return len(s) - size
+}
+
+// isInvalidRune reports whether a rune is invalid or unwanted for text display.
+func isInvalidRune(r rune) bool {
+	// Invalid UTF-8 placeholder
+	if r == utf8.RuneError {
+		return true
+	}
+
+	// C0 and C1 control characters, except \n and \t
+	if (r < 0x20 && r != '\n' && r != '\t') || (r >= 0x7f && r < 0xa0) {
+		return true
+	}
+
+	// Unicode noncharacters: U+FDD0–U+FDEF or any codepoint ending in FFFE/FFFF
+	if (r >= 0xFDD0 && r <= 0xFDEF) || (r&0xFFFF == 0xFFFE) || (r&0xFFFF == 0xFFFF) {
+		return true
+	}
+
+	// Optionally remove unprintable runes (if you want only visible text)
+	if !unicode.IsPrint(r) && !unicode.IsSpace(r) {
+		return true
+	}
+
+	return false
+}
+
+// SanitizeUnicode removes all invalid or unwanted Unicode runes.
+func SanitizeUnicode(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if !isInvalidRune(r) {
+			out = append(out, r)
+		}
+	}
+	return string(out)
 }
