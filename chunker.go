@@ -8,33 +8,14 @@ import (
 	"unicode/utf8"
 )
 
-// TYPELINK is a constant used to mark a rune as part of a link.
-const TYPELINK = 100000
-
-// TYPEEND is a constant used to mark the end of a chunk.
-const TYPEEND = -1
-
-// isStartWithLink checks if the given text starts with "http://" or "https://".
-func isStartWithLink(text string) bool {
-	return strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://")
-}
-
-// sentenceSplitCharacterM is a map of characters that can be used to split sentences.
-var sentenceSplitCharacterM = map[string]bool{
-	"\n": true,
-	".":  true,
-	";":  true,
-	" ":  true,
-}
-
 // FirstChunk extracts the first chunk of text based on minSize and maxSize.
 // It attempts to break at sentence boundaries or spaces, while also handling links.
 func FirstChunk(text string, minSize, maxSize int) string {
-	if maxSize == 0 {
+	if maxSize <= 0 {
 		return ""
 	}
 
-	if minSize == 0 {
+	if minSize <= 0 {
 		minSize = maxSize
 	}
 
@@ -42,16 +23,22 @@ func FirstChunk(text string, minSize, maxSize int) string {
 		return SanitizeUnicode(text)
 	}
 
-	candidate := ""
-	var link string
 	isLink := false
-
-	lastindex := LastRuneByteIndex(text)
-	runetypemap := map[int]int{}
+	link := ""
+	candidate := ""
 	var fragment string
+	
+	// Track which byte indices are part of a link.
+	isLinkRune := make([]bool, len(text))
+	
+	lastindex := -1
+	for i := range text {
+		lastindex = i
+	}
+
 	for i, r := range text {
-		// build link
-		if !isLink && isStartWithLink(text[i:]) {
+		// Link detection
+		if !isLink && r == 'h' && isStartWithLink(text[i:]) {
 			isLink = true
 			link = ""
 		}
@@ -62,20 +49,29 @@ func FirstChunk(text string, minSize, maxSize int) string {
 			}
 		}
 
-		if isLink {
-			// max link is 1024
-			if len(link) > 1024 {
-				isLink = false
-			}
+		if isLink && len(link) > 1024 {
+			isLink = false
 		}
 
 		if isLink {
-			runetypemap[i] = TYPELINK
+			if i < len(isLinkRune) {
+				isLinkRune[i] = true
+			}
 			link += string(r)
+			
+			// If adding this part of the link makes us exceed maxSize, we should stop.
+			if len(candidate)+len(fragment)+len(link) > maxSize {
+				// We reached the limit while in a link.
+				// Commit what we have in fragment to candidate (if it fits).
+				if len(candidate)+len(fragment) <= maxSize {
+					candidate += fragment
+					fragment = ""
+				}
+				break
+			}
 			continue
 		}
 
-		runetypemap[i] = 1 // normal
 		if !isLink {
 			fragment += link + string(r)
 			link = ""
@@ -83,46 +79,60 @@ func FirstChunk(text string, minSize, maxSize int) string {
 
 		// build fragment
 		fragmentEnded := r == '.' || r == '\n' || r == ';' || i == lastindex
-		if len(fragment)+len(candidate) > maxSize { // add and extra rune
+		
+		if len(fragment)+len(candidate) > maxSize {
 			fragmentEnded = true
 		}
+		
 		if fragmentEnded {
 			// commit to candidate
-			if len(candidate) < minSize || len(candidate)+len(fragment) < maxSize {
-				//  keep do it
+			if len(candidate) < minSize || len(candidate)+len(fragment) <= maxSize {
 				candidate += fragment
 				fragment = ""
+				if len(candidate) >= maxSize && i != lastindex {
+					continue
+				}
 				continue
 			}
-
 			// too big
 			break
 		}
 	}
-	runetypemap[lastindex] = TYPEEND // mark end
-	// runetypemap[len(text)] = TYPEEND // mark end
 
+	// Second pass: backward search for a good break point
 	lasti := len(candidate)
-	for i := range candidate {
-		ri := len(candidate) - i - 1
-		r := candidate[ri]
+	// Only perform backward search if we haven't reached the end of the text
+	if len(candidate) < len(text) {
+		for i := range candidate {
+			ri := len(candidate) - i - 1
+			r := candidate[ri]
 
-		if runetypemap[ri] == TYPEEND {
-			break
-		}
-		if runetypemap[ri] == TYPELINK {
-			continue // do not break in middle of the link
-		}
-		if r == ' ' || r == '.' || r == '\n' {
-			if ri < minSize {
+			if ri < len(isLinkRune) && isLinkRune[ri] {
+				// We are in the middle of a link.
+				// Find where the link starts and break BEFORE it.
+				for ri > 0 && isLinkRune[ri-1] {
+					ri--
+				}
+				lasti = ri
 				break
 			}
-			lasti = ri + 1
-			break
+			
+			if r == ' ' || r == '.' || r == '\n' || r == ';' {
+				if ri < minSize {
+					break
+				}
+				lasti = ri + 1
+				break
+			}
 		}
 	}
 
 	return SanitizeUnicode(candidate[:lasti])
+}
+
+// isStartWithLink checks if the given text starts with "http://" or "https://".
+func isStartWithLink(text string) bool {
+	return strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://")
 }
 
 // Chunk splits the given text into chunks of a specified size with a given overlap.
@@ -138,26 +148,36 @@ func Chunk(text string, chunkSize int, chunkOverlap int) []string {
 	}
 
 	chunks := []string{}
-	text = Substring(text, 0, 1000_000) // work with top 1M characters
+	text = SanitizeUnicode(text)
+	text = strings.TrimSpace(text)
+	
 	for len(text) > 0 {
 		chunk := FirstChunk(text, chunkSize/2, chunkSize)
-		chunks = append(chunks, chunk)
-		if len(chunk) < 2 {
-			text = text[len(chunk):]
+		if chunk == "" {
+			_, size := utf8.DecodeRuneInString(text)
+			text = text[size:]
+			text = strings.TrimLeftFunc(text, unicode.IsSpace)
 			continue
 		}
+		chunks = append(chunks, chunk)
 
 		if len(chunk) >= len(text) {
-			text = ""
-			continue
+			break
 		}
-		removechunk := FirstChunk(text, (chunkSize-chunkOverlap)/2, (chunkSize - chunkOverlap))
+
+		removeSize := chunkSize - chunkOverlap
+		if removeSize <= 0 {
+			removeSize = 1
+		}
+		
+		removechunk := FirstChunk(text, removeSize/2, removeSize)
 		if len(removechunk) > 0 {
 			text = text[len(removechunk):]
-			continue
+		} else {
+			_, size := utf8.DecodeRuneInString(text)
+			text = text[size:]
 		}
-		// make sure we alway move forward
-		text = text[len(chunk):]
+		text = strings.TrimLeftFunc(text, unicode.IsSpace)
 	}
 	return chunks
 }
@@ -168,23 +188,25 @@ func Substring(s string, start int, end int) string {
 	if s == "" {
 		return ""
 	}
-
-	if start == 0 && end >= len(s) {
-		return s
-	}
-
-	start_str_idx := 0
-	i := 0
-	for j := range s {
+	
+	var startIdx, endIdx int
+	var i int
+	foundStart := false
+	for byteIdx := range s {
 		if i == start {
-			start_str_idx = j
+			startIdx = byteIdx
+			foundStart = true
 		}
 		if i == end {
-			return s[start_str_idx:j]
+			endIdx = byteIdx
+			return s[startIdx:endIdx]
 		}
 		i++
 	}
-	return s[start_str_idx:]
+	if foundStart {
+		return s[startIdx:]
+	}
+	return ""
 }
 
 // LastRuneByteIndex returns the byte index of the last rune in a string.
@@ -202,31 +224,34 @@ func LastRuneByteIndex(s string) int {
 
 // isInvalidRune reports whether a rune is invalid or unwanted for text display.
 func isInvalidRune(r rune) bool {
-	// Invalid UTF-8 placeholder
 	if r == utf8.RuneError {
 		return true
 	}
-
-	// C0 and C1 control characters, except \n and \t
 	if (r < 0x20 && r != '\n' && r != '\t') || (r >= 0x7f && r < 0xa0) {
 		return true
 	}
-
-	// Unicode noncharacters: U+FDD0–U+FDEF or any codepoint ending in FFFE/FFFF
 	if (r >= 0xFDD0 && r <= 0xFDEF) || (r&0xFFFF == 0xFFFE) || (r&0xFFFF == 0xFFFF) {
 		return true
 	}
-
-	// Optionally remove unprintable runes (if you want only visible text)
 	if !unicode.IsPrint(r) && !unicode.IsSpace(r) {
 		return true
 	}
-
 	return false
 }
 
 // SanitizeUnicode removes all invalid or unwanted Unicode runes.
 func SanitizeUnicode(s string) string {
+	needsSanitize := false
+	for _, r := range s {
+		if isInvalidRune(r) {
+			needsSanitize = true
+			break
+		}
+	}
+	if !needsSanitize {
+		return s
+	}
+
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
 		if !isInvalidRune(r) {

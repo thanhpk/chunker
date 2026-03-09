@@ -18,6 +18,18 @@ func TestSample(t *testing.T) {
 	}
 }
 
+func TestSample02(t *testing.T) {
+	data, err := os.ReadFile("./sample02.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chunks := Chunk(string(data), 1048576, 1000)
+	if len(chunks) != 1 {
+		t.Errorf("expect %d, got %d", 1, len(chunks))
+	}
+}
+
 func TestShort(t *testing.T) {
 	text := "word001 word002 word003"
 	chunks := Chunk(text, 5, 1)
@@ -129,35 +141,48 @@ Check out the official website for more details: [Amazing Gadget](https://exampl
 Welcome to the **Amazing Gadget**! This device helps you stay productive `,
 		`you stay productive while looking stylish.
 Check out the official website for more details: [Amazing `,
-		`Check out the official website for more details: [Amazing `,
+		`Check out the official website for more details: [Amazing Gadget](`,
 		`Gadget](https://example.com/amazing-gadget).
 
-![Amazing Gadget Photo](https://via.placeholder.com/600x300 `,
-		`![Amazing Gadget Photo](https://via.placeholder.com/600x300 "Amazing Gadget in Action")
-
-`, `Action")
+![Amazing Gadget `,
+		`Photo](https://via.placeholder.com/600x300 "Amazing Gadget in Action")
 
 ## Key Features
+`,
+		`## Key Features
 - **Lightweight & Portable** – only 500 g.
 `,
 		`- **Battery Life** – up to 12 hours on a single charge.
 `,
 		`- **Connectivity** – Wi-Fi 6 and Bluetooth 5.2 support.
-`, `- **Warranty** – 2-year international coverage.
+`, 
+		`- **Warranty** – 2-year international coverage.
 
-`,
+> *Tip:* Combine it with our [accessories `,
 		`> *Tip:* Combine it with our [accessories pack](https://example.com/accessories) for the best `,
 		`for the best experience.`,
 	}
 	chunks := Chunk(text, 100, 20)
+	
 	if len(chunks) != len(expect) {
 		t.Fatalf("expected %d chunks, got %d", len(expect), len(chunks))
 	}
-
 	for i, chunk := range chunks {
 		if chunk != expect[i] {
 			t.Errorf("expected chunk %d to be '%s', got '%s'", i, expect[i], chunk)
 		}
+	}
+}
+
+func TestNoBreakInLink(t *testing.T) {
+	// A link that spans across the maxSize boundary (20-30)
+	text := "Click here: https://example.com/very/long/path/to/resource for more info."
+	
+	chunk := FirstChunk(text, 20, 30)
+	
+	expected := "Click here: " // It should break before the link starts
+	if chunk != expected {
+		t.Errorf("expected '%s', got '%s'", expected, chunk)
 	}
 }
 
@@ -244,9 +269,6 @@ func TestFirstChunk(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			//			if tc.name != "no sentence break in range" {
-			//return
-			//}
 			chunk := FirstChunk(tc.text, tc.min, tc.max)
 			if chunk != tc.expected {
 				t.Errorf("expected '%s', got '%s'", tc.expected, chunk)
